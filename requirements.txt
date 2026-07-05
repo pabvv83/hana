@@ -1,0 +1,6 @@
+py-cord[voice]
+groq
+google-generativeai
+python-dotenv
+requests
+vosk
