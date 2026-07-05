@@ -26,10 +26,6 @@ MURF_API_KEY = os.getenv("MURF_API_KEY")
 TAVILY_API_KEY = os.getenv("TAVILY_API_KEY")
 ID_CANAL_STATUS = 1497646983287144568
 
-if not all([DISCORD_TOKEN, GEMINI_API_KEY, GROQ_API_KEY, MURF_API_KEY]):
-    print("❌ ERRO CRÍTICO: Chaves de API essenciais ausentes no arquivo .env!")
-    exit()
-
 # ================== INICIALIZAÇÃO DE APIs ==================
 genai.configure(api_key=GEMINI_API_KEY)
 groq_client = Groq(api_key=GROQ_API_KEY)
@@ -64,11 +60,7 @@ def buscar_na_internet(query: str) -> str:
     except Exception as e:
         return f"Erro ao realizar busca na internet: {e}"
 
-if not os.path.exists("model-vosk"):
-    print("❌ Modelo Vosk não encontrado! Verifique a pasta 'model-vosk'")
-    vosk_model = None
-else:
-    vosk_model = Model("model-vosk")
+model = Model(model_name="vosk-model-small-pt-0.3")
 
 TERMOS_HANA = ["[unk]"]
 VOCAB_VOSK = json.dumps(TERMOS_HANA)
