@@ -1,7 +1,6 @@
 import re
 import random
 import discord
-import discord.sinks
 from discord.ext import commands
 import google.generativeai as genai
 from groq import Groq
@@ -9,12 +8,11 @@ from datetime import datetime
 import json
 import os
 from dotenv import load_dotenv
-import requests
-from vosk import Model, KaldiRecognizer
 import asyncio
-import queue
 from collections import defaultdict
 import time
+from flask import Flask
+from threading import Thread
 
 # ================== CARREGA .ENV ==================
 load_dotenv()
@@ -22,7 +20,6 @@ load_dotenv()
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
-MURF_API_KEY = os.getenv("MURF_API_KEY")
 TAVILY_API_KEY = os.getenv("TAVILY_API_KEY")
 ID_CANAL_STATUS = 1497646983287144568
 
@@ -59,74 +56,6 @@ def buscar_na_internet(query: str) -> str:
         return resposta
     except Exception as e:
         return f"Erro ao realizar busca na internet: {e}"
-
-model = Model(model_name="vosk-model-small-pt-0.3")
-
-TERMOS_HANA = ["[unk]"]
-VOCAB_VOSK = json.dumps(TERMOS_HANA)
-
-# ================== MURF.AI TTS ==================
-class MurfTTS:
-    def __init__(self, api_key):
-        self.api_key = api_key
-        self.base_url = "https://api.murf.ai/v1/speech/generate"
-    
-    def generate(self, text: str):
-        if not text or len(text.strip()) < 2:
-            return None
-            
-        text_clean = re.sub(r'<a?:\w+:\d+>', '', text)
-        
-        payload = {
-            "text": text_clean[:900],
-            "voiceId": "Anwesha",
-            "style": "Conversational",
-            "modelVersion": "GEN2",
-            "multiNativeLocale": "pt-BR",
-            "pitch": 4,
-            "rate": -7,
-            "format": "MP3",
-            "sampleRate": 44100
-        }
-        
-        headers = {
-            "Content-Type": "application/json",
-            "api-key": self.api_key
-        }
-        
-        try:
-            response = requests.post(self.base_url, json=payload, headers=headers, timeout=20)
-            response.raise_for_status()
-            data = response.json()
-            return data.get("audioFile")
-        except Exception as e:
-            print(f"❌ Erro Murf API: {e}")
-            return None
-
-murf_tts = MurfTTS(MURF_API_KEY)
-
-class HanaVoskSink(discord.sinks.Sink):
-    def __init__(self, bot, ctx):
-        self.bot = bot
-        self.ctx = ctx
-        self.recognizer = KaldiRecognizer(vosk_model, 48000, VOCAB_VOSK)
-
-    def write(self, data):
-        if self.recognizer.AcceptWaveform(data.data):
-            result = json.loads(self.recognizer.Result())
-            texto_ouvido = result.get("text", "")
-            
-            if texto_ouvido and len(texto_ouvido) > 2:
-                print(f"🎤 Ouvido: {texto_ouvido}")
-                asyncio.run_coroutine_threadsafe(
-                    self.responder_voz(texto_ouvido), 
-                    self.bot.loop
-                )
-
-    async def responder_voz(self, texto):
-        await self.ctx.send(f"🎤 **Ouvi:** *{texto}*")
-        command = self.bot.get_command('fala')
-        await self.ctx.invoke(command, texto=texto)
 
 # --- SISTEMA DE DATABANK (JSON) ---
 def carregar_json(caminho):
@@ -251,7 +180,6 @@ class HanaSession:
 intents = discord.Intents.default()
 intents.message_content = True
 intents.members = True
-intents.voice_states = True
 
 bot = commands.Bot(command_prefix="!", intents=intents, help_command=None)
 sessions = {}
@@ -272,47 +200,6 @@ async def log_status(msg):
     if canal:
         timestamp = datetime.now().strftime("%H:%M:%S")
         await canal.send(f"🛰️ [`{timestamp}`] **Sistema Hana:** {msg}")
-
-# ================== FUNÇÕES DE VOZ ==================
-async def play_audio_in_vc(ctx_or_message, audio_url: str):
-    if not audio_url:
-        return False
-    
-    if hasattr(ctx_or_message, 'voice_client'):
-        vc = ctx_or_message.voice_client
-        author = ctx_or_message.author
-    else:
-        vc = ctx_or_message.guild.voice_client
-        author = ctx_or_message.author
-  
-    if not author.voice:
-        return False
-    
-    try:
-        if not vc:
-            vc = await author.voice.channel.connect()
-            await asyncio.sleep(2) 
-        elif vc.channel != author.voice.channel:
-            await vc.move_to(author.voice.channel)
-            await asyncio.sleep(1)
-        
-        response = requests.get(audio_url)
-        with open("hana_temp.mp3", "wb") as f:
-            f.write(response.content)
-        
-        if vc and vc.is_connected():
-            if vc.is_playing():
-                vc.stop()
-            
-            source = discord.FFmpegPCMAudio("hana_temp.mp3", options="-filter:a volume=1.1")
-            vc.play(source, after=lambda e: os.remove("hana_temp.mp3") if os.path.exists("hana_temp.mp3") else None)
-            return True
-        else:
-            print("❌ Não estou conectada a um canal de voz.")
-            return False
-    except Exception as e:
-        print(f"Erro ao tocar áudio: {e}")
-        return False
 
 @bot.event
 async def on_member_join(member):
@@ -474,15 +361,8 @@ async def on_message(message):
                 sn.history.append({"role": "user", "content": prompt})
                 sn.history.append({"role": "assistant", "content": resposta_texto})
                 sn.interactions += 1
-  
-                if message.author.voice and message.guild:
-                    audio_url = murf_tts.generate(resposta_texto)
-                    if audio_url:
-                        await play_audio_in_vc(message, audio_url)
-                    else:
-                        await message.reply("❌ Não consegui gerar a voz agora...")
-                else:
-                    await message.reply(resposta_texto)
+
+                await message.reply(resposta_texto)
 
             except Exception as e:
                 await log_status(f"ERRO DE PROCESSAMENTO: {e}")
@@ -490,56 +370,6 @@ async def on_message(message):
 
     await bot.process_commands(message)
 
-# ================== COMANDOS DE VOZ ==================
-@bot.command()
-async def join(ctx):
-    if not ctx.author.voice:
-        return await ctx.send("Entra num canal de voz primeiro, neandertal!")
-    
-    channel = ctx.author.voice.channel
-    vc = ctx.voice_client
-
-    if vc:
-        if vc.channel.id != channel.id:
-            await vc.move_to(channel)
-    else:
-        vc = await channel.connect()
-
-    await asyncio.sleep(2)
-    await ctx.send("👂 **Entrei!** Já ativei meus receptores.")
-
-    if not vc.recording:
-        vc.start_recording(HanaVoskSink(bot, ctx), callback_fake, ctx.channel)
-    
-    await log_status(f"🎤 Hana começou a ouvir em #{channel.name}")
-
-async def callback_fake(sink, *args):
-    pass
-
-@bot.command(aliases=["leave"])
-async def tchau(ctx):
-    if ctx.voice_client:
-        await ctx.voice_client.disconnect()
-        await ctx.send("Dei o delta! Tchau! 👋")
-    else:
-        await ctx.send("Eu nem estou em um canal de voz, tá bebendo água de ar condicionado?")
-
-@bot.command()
-async def fala(ctx, *, texto=None):
-    if not texto:
-        return await ctx.send("Fala o que pra eu repetir?")
-    
-    if not ctx.voice_client:
-        channel = ctx.author.voice.channel
-        await channel.connect()
-        await asyncio.sleep(1)
-
-    audio_url = murf_tts.generate(texto)
-    if audio_url:
-        await play_audio_in_vc(ctx, audio_url)
-    else:
-        await ctx.send("❌ Não consegui gerar a voz agora...")
-    
 # ================== COMANDOS DE MODERAÇÃO ==================
 @bot.command()
 @commands.has_permissions(kick_members=True)
@@ -802,7 +632,6 @@ async def ajuda(ctx):
     embed.add_field(name="🛡️ Moderação", value="`!kick`, `!ban`, `!clear [N]`, `!automod` (ADM)", inline=False)
     embed.add_field(name="🧠 Memória Privada", value="`!lembrar`, `!fatos`, `!deletar [N]`", inline=True)
     embed.add_field(name="📚 Dicionário", value="`!definir [termo] [msg]`, `!definir lista`", inline=True)
-    embed.add_field(name="🎤 Voz", value="`!join`, `!leave`, `!fala [texto]`", inline=True)
     embed.add_field(name="⚙️ Config", value="`!switch` (ADM), `!search [0/1/2]` (ADM), `!modo`, `!status`, `!limpar`, `!prefixo`, `!setwelcome`", inline=False)
     embed.add_field(name="🌆 Servidor", value="`!serverinfo`, `!userinfo [@user]`, `!avatar`, `!uptime`", inline=True)
     embed.add_field(name="🎲 Diversão", value="`!aura [@user]`, `!d20`, `!path [@user]`, `!desenha [ideia]`", inline=True)
@@ -975,15 +804,6 @@ async def slash_clear(ctx: discord.ApplicationContext, quantidade: int): await c
 @commands.has_permissions(administrator=True)
 async def slash_automod(ctx: discord.ApplicationContext): await automod(ctx)
 
-@bot.slash_command(name="join", description="Hana entra no seu canal de voz")
-async def slash_join(ctx: discord.ApplicationContext): await join(ctx)
-
-@bot.slash_command(name="leave", description="Hana sai do canal de voz")
-async def slash_leave(ctx: discord.ApplicationContext): await tchau(ctx)
-
-@bot.slash_command(name="fala", description="Hana fala um texto no canal de voz")
-async def slash_fala(ctx: discord.ApplicationContext, texto: str): await fala(ctx, texto=texto)
-
 # ================== TRATAMENTO DE ERROS ==================
 @bot.event
 async def on_command_error(ctx, error):
@@ -996,11 +816,34 @@ async def on_command_error(ctx, error):
     else:
         print(f"Erro ignorado: {error}")
 
+# ================== KEEP-ALIVE (FLASK) ==================
+# Servidor HTTP mínimo só pra dar sinal de vida pro monitor (UptimeRobot/etc)
+# e o Render não deixar o Web Service dormir por "falta de atividade".
+app_flask = Flask('')
+
+@app_flask.route('/')
+def home():
+    return "Hana tá online e de olho em vocês. 👁️"
+
+@app_flask.route('/health')
+def health():
+    return {"status": "ok", "latencia_ms": round(bot.latency * 1000) if bot.is_ready() else None}, 200
+
+def run_flask():
+    port = int(os.environ.get("PORT", 8080))
+    app_flask.run(host='0.0.0.0', port=port)
+
+def keep_alive():
+    t = Thread(target=run_flask)
+    t.daemon = True
+    t.start()
+
 async def main():
     async with bot:
         await bot.start(os.getenv("DISCORD_TOKEN"))
 
 if __name__ == "__main__":
+    keep_alive()
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
