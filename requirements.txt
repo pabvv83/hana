@@ -1,6 +1,6 @@
 py-cord
 groq
-google-genai
+google-generativeai
 python-dotenv
 requests
 flask
