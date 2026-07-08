@@ -274,8 +274,8 @@ async def on_member_remove(member):
 @bot.event
 async def on_ready():
     await bot.change_presence(status=discord.Status.idle, activity=discord.CustomActivity(name="Use !ajuda ✨"))
-    await log_status(f"Hana **v4.6.2** ONLINE! Modo: {current_mode.upper()} | Latência: {round(bot.latency * 1000)}ms")
-    print(f'✅ Hana v4.6.2 Online como {bot.user}')
+    await log_status(f"Hana **v4.7** ONLINE! Modo: {current_mode.upper()} | Latência: {round(bot.latency * 1000)}ms")
+    print(f'✅ Hana v4.7 Online como {bot.user}')
 
 @bot.event
 async def on_message(message):
@@ -315,6 +315,10 @@ async def on_message(message):
 
                 # Processamento de Imagem (Visão)
                 if message.attachments:
+                    if current_mode == "groq":
+                        await message.reply(f"❌ O Llama 3.3 não consegue processar imagens. Troca pro Gemini com `!switch` se precisar disso! {EMOJIS['rage']}")
+                        return
+                    
                     model_v = genai.GenerativeModel("gemini-3.1-flash-lite")
                     att = message.attachments[0]
                     if any(att.filename.lower().endswith(ext) for ext in ['png', 'jpg', 'jpeg', 'webp']):
@@ -323,7 +327,7 @@ async def on_message(message):
                         await message.reply(res.text)
                         return
 
-# Chat por Modelo
+                # ==================== GEMINI ====================
                 if current_mode == "gemini":
                     # Vincula a ferramenta apenas se o Tavily estiver configurado E não estiver desativado (modo 0)
                     ferramentas = [buscar_na_internet] if (tavily_client and modo_pesquisa != 0) else None
@@ -345,7 +349,7 @@ async def on_message(message):
                     
                     response = chat.send_message(prompt_completo)
                     
-                    # --- CORREÇÃO DO ERRO AQUI ---
+                    # --- LOOP DE TOOL CALLING ---
                     # Se o Gemini decidir usar a ferramenta de busca, precisamos resolver as chamadas
                     # até que ele retorne um texto de fato.
                     while response.candidates and response.candidates[0].content.parts[0].function_call:
@@ -358,6 +362,32 @@ async def on_message(message):
                     
                     resposta_texto = response.text
 
+                # ==================== GROQ / LLAMA 3.3 70B ====================
+                elif current_mode == "groq":
+                    # Constrói o histórico para o Groq no formato messages
+                    chat_history_groq = []
+                    
+                    # Adiciona o histórico da conversa
+                    for m in sn.history:
+                        chat_history_groq.append({
+                            "role": "user" if m["role"] == "user" else "assistant",
+                            "content": m["content"]
+                        })
+                    
+                    # Prepara o prompt final com lore embutida
+                    prompt_final_groq = f"{lore_completa}\n\nUsuário diz: {prompt}"
+                    
+                    # Faz a chamada ao Groq com Llama 3.3 70B
+                    response_groq = groq_client.messages.create(
+                        model="llama-3.3-70b-versatile",
+                        messages=chat_history_groq + [{"role": "user", "content": prompt_final_groq}],
+                        max_tokens=1024,
+                        temperature=0.7
+                    )
+                    
+                    resposta_texto = response_groq.content[0].text
+
+                # Adiciona à memória e responde
                 sn.history.append({"role": "user", "content": prompt})
                 sn.history.append({"role": "assistant", "content": resposta_texto})
                 sn.interactions += 1
@@ -405,7 +435,11 @@ async def switch(ctx):
 
 @bot.command()
 async def modo(ctx):
-    await ctx.send(f"No momento estou operando com: **{current_mode.upper()}**")
+    modelos = {
+        "gemini": "Gemini 3.1 Flash Lite (com visão + busca web)",
+        "groq": "Llama 3.3 70B Versatile (rápido e poderoso)"
+    }
+    await ctx.send(f"🧠 **Modelo Ativo:** {current_mode.upper()}\n> {modelos.get(current_mode, 'Desconhecido')}")
 
 @bot.command()
 @commands.has_permissions(administrator=True)
@@ -628,14 +662,14 @@ async def limpar(ctx):
 
 @bot.command(name="ajuda")
 async def ajuda(ctx):
-    embed = discord.Embed(title="🤖 Central de Comando Hana 4.6.2", color=0x7000FF)
+    embed = discord.Embed(title="🤖 Central de Comando Hana 4.7", color=0x7000FF)
     embed.add_field(name="🛡️ Moderação", value="`!kick`, `!ban`, `!clear [N]`, `!automod` (ADM)", inline=False)
     embed.add_field(name="🧠 Memória Privada", value="`!lembrar`, `!fatos`, `!deletar [N]`", inline=True)
     embed.add_field(name="📚 Dicionário", value="`!definir [termo] [msg]`, `!definir lista`", inline=True)
     embed.add_field(name="⚙️ Config", value="`!switch` (ADM), `!search [0/1/2]` (ADM), `!modo`, `!status`, `!limpar`, `!prefixo`, `!setwelcome`", inline=False)
     embed.add_field(name="🌆 Servidor", value="`!serverinfo`, `!userinfo [@user]`, `!avatar`, `!uptime`", inline=True)
     embed.add_field(name="🎲 Diversão", value="`!aura [@user]`, `!d20`, `!path [@user]`, `!desenha [ideia]`", inline=True)
-    embed.set_footer(text="Hana v4.6.2 — Todos os comandos disponíveis também como /slash")
+    embed.set_footer(text="Hana v4.7 — Todos os comandos disponíveis também como /slash")
     await ctx.send(embed=embed)
 
 # ================== SERVIDOR & CONFIG ==================
@@ -762,7 +796,7 @@ async def slash_status(ctx: discord.ApplicationContext): await status(ctx)
 @bot.slash_command(name="modo", description="Informa qual modelo de IA está ativo")
 async def slash_modo(ctx: discord.ApplicationContext): await modo(ctx)
 
-@bot.slash_command(name="switch", description="Alterna entre Gemini e Groq (Apenas ADM)")
+@bot.slash_command(name="switch", description="Alterna entre Gemini e Groq/Llama (Apenas ADM)")
 @commands.has_permissions(administrator=True)
 async def slash_switch(ctx: discord.ApplicationContext): await switch(ctx)
 
@@ -785,7 +819,7 @@ async def slash_deletar(ctx: discord.ApplicationContext, numero: int): await del
 @bot.slash_command(name="definir", description="Gerencia o dicionário do servidor")
 async def slash_definir(ctx: discord.ApplicationContext, palavra: str, significado: str = None): await definir(ctx, palavra, significado=significado)
 
-@bot.slash_command(name="desenha", description="Gera uma imagem via Gemini Nano Banana")
+@bot.slash_command(name="desenha", description="Gera uma imagem via Gemini (necessário estar no modo Gemini)")
 async def slash_desenha(ctx: discord.ApplicationContext, ideia: str): await desenha(ctx, ideia=ideia)
 
 @bot.slash_command(name="kick", description="Expulsa um membro do servidor")
