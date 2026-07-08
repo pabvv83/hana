@@ -1,4 +1,4 @@
-py-cord[voice]
+py-cord
 groq
 google-generativeai
 python-dotenv
