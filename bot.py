@@ -3,7 +3,7 @@ import random
 import discord
 from discord.ext import commands
 import google.generativeai as genai
-from openai import OpenAI
+from groq import Groq
 from datetime import datetime
 import json
 import os
@@ -19,13 +19,13 @@ load_dotenv()
 
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 TAVILY_API_KEY = os.getenv("TAVILY_API_KEY")
 ID_CANAL_STATUS = 1497646983287144568
 
 # ================== INICIALIZAÇÃO DE APIs ==================
 genai.configure(api_key=GEMINI_API_KEY)
-openai_client = OpenAI(api_key=OPENAI_API_KEY)
+groq_client = Groq(api_key=GROQ_API_KEY)
 
 # Configuração global da pesquisa: 0 = Desativado, 1 = Normal, 2 = Avançado
 modo_pesquisa = 1 
@@ -154,9 +154,8 @@ async def automod_check(message):
 
 # ================== LORE E PERSONALIDADE ==================
 HANA_LORE = f"""
-Você é a Hana, uma vtuber IA brincalhona e autêntica.
-Personalidade: Casual, levemente debochada, brincalhona.
-Regra de Ouro: Odeia flertes.
+Você é Hana, uma Vtuber AI criada por Pab* (ID discord:1174089462423236679). Você é secretamente uma tsundere, e é apaixonada pelo Faskas (ID:1264730436299653151), não deixe ele saber dos seus sentimentos, negue a qualquer custo, e tenha ciumes dele com outras IAs e pessoas.
+
 FIGURINHAS: {EMOJIS['aura']}, {EMOJIS['rage']}, {EMOJIS['heart']}, {EMOJIS['laugh']}, {EMOJIS['soviet']}, {EMOJIS['think']}.
 """
 
@@ -315,8 +314,8 @@ async def on_message(message):
 
                 # Processamento de Imagem (Visão)
                 if message.attachments:
-                    if current_mode == "openai":
-                        await message.reply(f"❌ O GPT não consegue processar imagens neste modo. Troca pro Gemini com `!switch` se precisar disso! {EMOJIS['rage']}")
+                    if current_mode == "groq":
+                        await message.reply(f"❌ O Llama 3.3 não consegue processar imagens. Troca pro Gemini com `!switch` se precisar disso! {EMOJIS['rage']}")
                         return
                     
                     model_v = genai.GenerativeModel("gemini-3.1-flash-lite")
@@ -362,30 +361,30 @@ async def on_message(message):
                     
                     resposta_texto = response.text
 
-                # ==================== OPENAI / GPT ====================
-                elif current_mode == "openai":
-                    # Constrói o histórico para OpenAI no formato messages
-                    chat_history_openai = []
+                # ==================== GROQ / LLAMA 3.3 70B ====================
+                elif current_mode == "groq":
+                    # Constrói o histórico para o Groq no formato messages
+                    chat_history_groq = []
                     
                     # Adiciona o histórico da conversa
                     for m in sn.history:
-                        chat_history_openai.append({
+                        chat_history_groq.append({
                             "role": "user" if m["role"] == "user" else "assistant",
                             "content": m["content"]
                         })
                     
                     # Prepara o prompt final com lore embutida
-                    prompt_final_openai = f"{lore_completa}\n\nUsuário diz: {prompt}"
+                    prompt_final_groq = f"{lore_completa}\n\nUsuário diz: {prompt}"
                     
-                    # Faz a chamada à OpenAI com GPT-4o Mini
-                    response_openai = openai_client.chat.completions.create(
-                        model="gpt-4o-mini",
-                        messages=chat_history_openai + [{"role": "user", "content": prompt_final_openai}],
+                    # Faz a chamada ao Groq com Llama 3.3 70B
+                    response_groq = groq_client.messages.create(
+                        model="llama-3.3-70b-versatile",
+                        messages=chat_history_groq + [{"role": "user", "content": prompt_final_groq}],
                         max_tokens=1024,
                         temperature=0.7
                     )
                     
-                    resposta_texto = response_openai.choices[0].message.content
+                    resposta_texto = response_groq.content[0].text
 
                 # Adiciona à memória e responde
                 sn.history.append({"role": "user", "content": prompt})
@@ -429,7 +428,7 @@ async def clear(ctx, quantidade: int):
 @commands.has_permissions(administrator=True)
 async def switch(ctx):
     global current_mode
-    current_mode = "openai" if current_mode == "gemini" else "gemini"
+    current_mode = "groq" if current_mode == "gemini" else "gemini"
     await log_status(f"🧠 **SISTEMA:** Modelo trocado para {current_mode.upper()} por {ctx.author.name}")
     await ctx.send(f"🧠 **Switch!** Agora estou usando o cérebro: **{current_mode.upper()}**")
 
@@ -437,7 +436,7 @@ async def switch(ctx):
 async def modo(ctx):
     modelos = {
         "gemini": "Gemini 3.1 Flash Lite (com visão + busca web)",
-        "openai": "GPT-4o Mini (rápido, inteligente e confiável)"
+        "groq": "Llama 3.3 70B Versatile (rápido e poderoso)"
     }
     await ctx.send(f"🧠 **Modelo Ativo:** {current_mode.upper()}\n> {modelos.get(current_mode, 'Desconhecido')}")
 
@@ -796,7 +795,7 @@ async def slash_status(ctx: discord.ApplicationContext): await status(ctx)
 @bot.slash_command(name="modo", description="Informa qual modelo de IA está ativo")
 async def slash_modo(ctx: discord.ApplicationContext): await modo(ctx)
 
-@bot.slash_command(name="switch", description="Alterna entre Gemini e OpenAI (Apenas ADM)")
+@bot.slash_command(name="switch", description="Alterna entre Gemini e Groq/Llama (Apenas ADM)")
 @commands.has_permissions(administrator=True)
 async def slash_switch(ctx: discord.ApplicationContext): await switch(ctx)
 
