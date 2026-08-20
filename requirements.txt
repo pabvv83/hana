@@ -1,6 +1,6 @@
 py-cord
 groq
-google-generativeai
+google-genai
 openai
 python-dotenv
 requests
